@@ -1,0 +1,20 @@
+{
+  "name": "pi-schedule",
+  "version": "1.0.0",
+  "description": "Durable Pi reminders and repeating prompts that survive restarts, on pi-durable.",
+  "type": "module",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "dependencies": {
+    "@earendil-works/chord": "1.6.1",
+    "@earendil-works/pi-durable": "1.6.1"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "scripts": { "test": "node --test *.test.ts" },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
