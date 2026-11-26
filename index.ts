@@ -9,15 +9,20 @@ import { createRegistry, defineExtension, Harness, MemoryStorage } from "@earend
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { addSchedule, parseDuration, removeSchedule, Schedules, takeDue, Timer, type Schedule } from "./schedule.ts";
 
-type Open = { harness: Harness; release: () => Promise<void>; stopWatch: () => Promise<unknown> };
+type Open = { harness: Harness; release: () => Promise<void> };
 const STATUS = "pi-schedule";
+// A reload replaces this module but keeps the process, its lock, and the open harness; the next instance reuses them.
+const OPEN_KEY = Symbol.for("pi-schedule.open");
+const opened = () => ((globalThis as Record<symbol, Map<string, Promise<Open>> | undefined>)[OPEN_KEY] ??= new Map());
 
 async function lock(path: string) {
   let fd: number;
   try { fd = openSync(path, "wx", 0o600); }
   catch (error: any) {
     if (error.code !== "EEXIST") throw error;
-    const pid = Number(await readFile(path, "utf8").catch(() => ""));
+    const contents = await readFile(path, "utf8").catch(() => "");
+    if (!/^[1-9]\d*$/.test(contents)) throw new Error(`Schedule lock ${path} has no process ID; remove it after confirming no Pi uses this session`);
+    const pid = Number(contents);
     try { process.kill(pid, 0); } catch (check: any) { if (check.code === "ESRCH") throw new Error(`Stale schedule lock for pid ${pid}; remove ${path} after confirming that process is gone`); }
     throw new Error(`Schedules for this session are open in pid ${pid}`);
   }
@@ -36,17 +41,24 @@ const describe = (item: Schedule) => `${item.id} · ${item.every ? `every ${item
  */
 export default function (pi: ExtensionAPI) {
   let open: Promise<Open> | undefined;
+  let openKey: string | undefined;
+  let stopWatch: (() => Promise<unknown>) | undefined;
   let ctxRef: ExtensionContext | undefined;
   let delivering = false;
 
-  async function openFor(ctx: ExtensionContext): Promise<Open> {
+  function storeKey(ctx: ExtensionContext) {
     const dir = ctx.sessionManager.getSessionDir();
     const key = createHash("sha256").update(ctx.sessionManager.getSessionId()).digest("hex").slice(0, 24);
+    return dir ? join(dir, `pi-schedule-${key}.sqlite`) : `memory:${key}`;
+  }
+
+  async function openStore(ctx: ExtensionContext): Promise<Open> {
+    const dir = ctx.sessionManager.getSessionDir();
     let release = async () => {};
     let storage;
     if (dir) {
       await mkdir(dir, { recursive: true, mode: 0o700 });
-      const path = join(dir, `pi-schedule-${key}.sqlite`);
+      const path = storeKey(ctx);
       release = await lock(`${path}.lock`);
       try { storage = await openNodeSqliteStorage(path, { busyTimeoutMs: 5000 }); await chmod(path, 0o600); }
       catch (error) { await release(); throw error; }
@@ -56,10 +68,24 @@ export default function (pi: ExtensionAPI) {
     const harness = await Harness.open(storage, { models: createModels(), registry }, C);
     harness.resume();
     await harness.commit(async (tx) => { await tx.doc(Schedules); }, C);
-    const watch = (await harness.watchDoc(Schedules, C))!;
+    return { harness, release };
+  }
+
+  async function openFor(ctx: ExtensionContext): Promise<Open> {
+    const key = storeKey(ctx), store = opened();
+    let shared: Promise<Open> | undefined = store.get(key);
+    if (!shared) {
+      shared = openStore(ctx);
+      store.set(key, shared);
+      shared.catch(() => { if (store.get(key) === shared) store.delete(key); });
+    }
+    const current: Open = await shared;
+    openKey = key;
+    const watch = (await current.harness.watchDoc(Schedules, C))!;
     watch.start(async (call) => { if (call.kind === "value") { status(call.value.schedules); void deliver(); } });
     status(watch.value.schedules);
-    return { harness, release, stopWatch: () => watch.stop() };
+    stopWatch = () => watch.stop();
+    return current;
   }
 
   function status(schedules: readonly Schedule[]) {
@@ -84,11 +110,13 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("agent_settled", () => { void deliver(); });
   pi.on("session_shutdown", async (event: any) => {
-    if (event.reason === "reload" || !open) return;
+    if (!open) return;
     const current = await open.catch(() => undefined);
     open = undefined;
-    if (!current) return;
-    await current.stopWatch();
+    await stopWatch?.();
+    stopWatch = undefined;
+    if (!current || event.reason === "reload") return;
+    opened().delete(openKey!);
     await current.harness.close(C);
     await current.release();
   });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -47,6 +47,31 @@ test("timers survive a restart, a missed slot fires once, and a cancelled timer 
     assert.deepEqual(left.map((item) => item.id), [hourly]);
     assert.equal(left[0].nextAt, 1_000_000 + 4 * 3_600_000);
     await harness.close(C);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a reload reuses the open store and lock; quitting releases the lock", async () => {
+  const { default: extension } = await import("./index.ts");
+  const dir = await mkdtemp(join(tmpdir(), "schedule-ext-"));
+  const notes: string[] = [];
+  const ctx = { sessionManager: { getSessionDir: () => dir, getSessionId: () => "session-1" }, ui: { setStatus: () => {}, notify: (text: string) => notes.push(text) }, isIdle: () => false };
+  const load = () => {
+    const handlers = new Map<string, (event: any, ctx: any) => unknown>(), commands = new Map<string, any>();
+    extension({ on: (name: string, handler: any) => handlers.set(name, handler), registerCommand: (name: string, command: any) => commands.set(name, command), sendUserMessage: () => {} } as any);
+    return { emit: (name: string, event: any = {}) => handlers.get(name)!(event, ctx), run: (args: string) => commands.get("schedule").handler(args, ctx) };
+  };
+  try {
+    const first = load();
+    await first.run("in 30m standup");
+    await first.emit("session_shutdown", { reason: "reload" });
+    const second = load();
+    await second.emit("session_start");
+    await second.run("list");
+    assert.match(notes.at(-1)!, /standup/);
+    await second.emit("session_shutdown", { reason: "quit" });
+    assert.equal((await readdir(dir)).find((name) => name.endsWith(".lock")), undefined);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
