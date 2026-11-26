@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "description": "Durable Pi reminders and repeating prompts that survive restarts, on pi-durable.",
   "type": "module",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "license": "MIT",
   "dependencies": {
     "@earendil-works/chord": "1.6.1",
@@ -13,8 +15,19 @@
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*"
   },
-  "scripts": { "test": "node --test *.test.ts" },
+  "scripts": {
+    "test": "node --test *.test.ts",
+    "typecheck": "tsc -p ."
+  },
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.6.1",
+    "@types/node": "^22.19.0",
+    "typebox": "1.4.7",
+    "typescript": "^7.0.2"
   }
 }

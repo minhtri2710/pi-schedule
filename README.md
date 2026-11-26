@@ -1,6 +1,6 @@
 # pi-schedule
 
-Durable reminders and repeating prompts for a Pi session, built on `pi-durable`. Unlike `/loop`, schedules survive restarts: each one is a durable task asleep in a SQLite store next to the session. A time that passes while Pi is closed fires once when the session opens again; a repeating schedule then moves to its next slot instead of firing every missed one.
+Durable reminders and repeating prompts for a Pi session, built on `pi-durable`. Schedules survive restarts: each one is a durable task asleep in a SQLite store next to the session. A time that passes while Pi is closed fires once when the session opens again; a repeating schedule then moves to its next slot instead of firing every missed one.
 
 ```sh
 cd ~/Work/pi-schedule && npm install --legacy-peer-deps
